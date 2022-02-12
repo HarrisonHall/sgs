@@ -23,7 +23,7 @@ struct LobbySession {
 	std::string lobby_name;
 	std::string game_name;
 	std::deque<PlayerDetails *> players;
-	json initialization_data;
+	json initialization_data = json::object();
 
 	LobbySession(PlayerDetails *leader, std::string lobby_name, std::string game_name)
 		: game_name(game_name), lobby_name(lobby_name) {
@@ -196,6 +196,7 @@ int main() {
 					lobbies[lobby_name] = new_lobby;
 					current_player->lobby_session_name = lobby_name;
 					creation_success["data"]["is_leader"] = true;
+					creation_success["data"]["player_id"] = current_player->id;
 					creation_success["lobby"] = lobby_name;
 					ws->send(creation_success.dump());
 				} else {
@@ -212,6 +213,7 @@ int main() {
 						lobby->add_player(current_player);
 						current_player->lobby_session_name = lobby_name;
 						joining_success["data"]["is_leader"] = false;
+						joining_success["data"]["player_id"] = current_player->id;
 						joining_success["lobby"] = lobby_name;
 						ws->send(joining_success.dump());
 

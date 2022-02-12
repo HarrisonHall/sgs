@@ -12,6 +12,7 @@
 using nlohmann::json;
 
 
+bool debug = true;
 uint16_t port = 3000;
 uint64_t max_players = 256;
 uint64_t max_lobbies = 16;

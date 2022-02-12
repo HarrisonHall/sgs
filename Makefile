@@ -1,3 +1,4 @@
+# TODO: generalize flags and add option for static compilation
 
 default: sgs
 

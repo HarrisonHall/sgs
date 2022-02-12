@@ -103,6 +103,11 @@ const json ERROR = {
 	{"data", EMPTY_JSON}
 };
 const std::string ERROR_MESSAGE = ERROR.dump();
+const json DATA = {
+	{"type", "data"},
+	{"data", EMPTY_JSON}
+};
+const std::string DATA_MESSAGE = DATA.dump();
 
 int main() {
 	uWS::App app = uWS::App();  // Websocket app
@@ -114,6 +119,11 @@ int main() {
 		// Connection started - initialization
 		.open = [=](auto *ws) {
 			auto *player_info = reinterpret_cast<PlayerDetails *>(ws->getUserData());
+
+			if (total_players >= max_players) {
+				ws->close();
+				return;
+			}
 			
 			player_info->id = ++PlayerDetails::last_id;
 			player_info->socket_connection = ws;
@@ -128,29 +138,36 @@ int main() {
 		.message = [](auto *ws, std::string_view _message, uWS::OpCode opCode) {
 			auto *current_player = reinterpret_cast<PlayerDetails *>(ws->getUserData());
 
+			std::cout << "Got message: " << _message << std::endl;
+
 			auto message = json::parse(_message, nullptr, false, true);
 			std::string lobby_name = message.value("lobby", "");
 			std::string game_name = message.value("game", "");
 			std::string message_type = message.value("type", "error");
 
+			std::cout << "Got " << message.dump() << std::endl;
+
 			if (message_type == "initialization_data" && current_player->is_leader()) {
-				
+				current_player->get_lobby()->initialization_data = message.value("data", EMPTY_JSON);
+				return;
 			}
 
 			if (message_type == "error" || message_type != "data") {
-				// Ignore for now
+				return;  // Ignore for now
 			}
 
+			// Process packets for certain games
 			if (game_processing.find(game_name) != game_processing.end()) {
 				message = game_processing[game_name](message);
 			}
 			
 			if (current_player->in_valid_lobby()) {
+				auto dumped_message = message.dump();
+				
 				if (current_player->is_leader()) {
 					// Send to everyone
 					std::cout << "--Forwarding to everyone" << std::endl;
 					for (auto *player : current_player->get_lobby()->players) {
-						auto dumped_message = message.dump();
 						if (player != current_player) {
 							player->socket_connection->send(dumped_message);
 						}
@@ -160,7 +177,7 @@ int main() {
 					std::cout << "--Forwarding to leader" << std::endl;
 					auto *leader = current_player->get_lobby()->get_leader();
 					if (leader) {
-						leader->socket_connection->send(message.dump());
+						leader->socket_connection->send(dumped_message);
 					}
 				}
 			} else {
@@ -171,28 +188,38 @@ int main() {
 					// Invalid lobby
 					ws->send(ERROR_MESSAGE);
 				} else if (search == lobbies.end()) {
-					// Create lobby if doesn't exists
+					// Create lobby if doesn't exist
 					json creation_success = SUCCESS;
-					std::cout << "Creating lobby" << std::endl;
+					std::cout << "Creating lobby " << lobby_name << std::endl;
 					
 					LobbySession *new_lobby = new LobbySession(current_player, lobby_name, game_name);
 					lobbies[lobby_name] = new_lobby;
 					current_player->lobby_session_name = lobby_name;
 					creation_success["data"]["is_leader"] = true;
+					creation_success["lobby"] = lobby_name;
 					ws->send(creation_success.dump());
 				} else {
-					// Add to lobby if not full
+					// Add to lobby if not full and game matches
 					std::cout << "Adding to lobby" << std::endl;
 					auto *lobby = search->second;
 					json joining_success = SUCCESS;
-					
-					if (lobby->is_full()) {
+
+					if (lobby->game_name != game_name) {
+						ws->send(ERROR_MESSAGE);
+					} else if (lobby->is_full()) {
 						ws->send(ERROR_MESSAGE);
 					} else {
 						lobby->add_player(current_player);
 						current_player->lobby_session_name = lobby_name;
 						joining_success["data"]["is_leader"] = false;
+						joining_success["lobby"] = lobby_name;
 						ws->send(joining_success.dump());
+
+						// Send initialization data
+						auto data_message = DATA;
+						data_message["data"] = lobby->initialization_data;
+						data_message["lobby"] = lobby_name;
+						ws->send(data_message.dump());
 					}
 				}
 			}
@@ -203,11 +230,17 @@ int main() {
 			auto *current_player = reinterpret_cast<PlayerDetails *>(ws->getUserData());
 			
 			auto *lobby = current_player->get_lobby();
+			bool was_leader = current_player->is_leader();
 			lobby->remove_player(current_player);
 			if (lobby->num_players() == 0) {
 				lobbies.erase(lobby->lobby_name);
 				std::cout << "Deleting lobby " << lobby->lobby_name << std::endl;
 				delete lobby;
+			} else if (was_leader) {
+				auto new_leader_message = SUCCESS;
+				new_leader_message["data"]["is_leader"] = true;
+				new_leader_message["lobby"] = lobby->lobby_name;
+				lobby->players[0]->socket_connection->send(new_leader_message.dump());
 			}
 
 			total_players--;
@@ -241,12 +274,11 @@ int main() {
 	
 	app.listen(port, [](auto *listen_socket) {
 		if (listen_socket) {
-			std::cout << "Listening" << std::endl;
+			std::cout << "Listening on " << port << std::endl;
 		}
 	});
 	
 	app.run();
 	
 	std::cout << "Failed to listen" << std::endl;
-	// TODO spawn thread for cleaning up games?
 }

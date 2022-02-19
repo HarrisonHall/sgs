@@ -1,11 +1,16 @@
-/**
- * server.cpp
- */
+// server.cpp
+// ==========
+// Run simple game server.
+// Configuration done in config.hpp.
 
-#include <string>
-#include <deque>
-#include <map>
+
+#pragma GCC diagnostic ignored "-Wunused-value"  // Selectively ignore assert warning
+
+#include <cassert>
 #include <iostream>
+#include <map>
+#include <string>
+#include <vector>
 
 #include "uWebSockets/src/App.h"
 #include "json.hpp"
@@ -14,39 +19,51 @@
 
 
 using nlohmann::json;
-struct LobbySession;
-struct PlayerDetails;
-std::map<std::string, LobbySession*> lobbies;
+
+struct LobbySession;  // Lobby information
+struct PlayerDetails;  // Player/connection information
 
 
 struct LobbySession {
-	std::string lobby_name;
-	std::string game_name;
-	std::deque<PlayerDetails *> players;
-	json initialization_data = json::object();
+	std::string lobby_name;  // Name of lobby. Equivalent to corresponding key in lobbies.
+	std::string game_name;  // Name of lobby game. Must match for player to join lobby. 
+	std::vector<PlayerDetails *> players;  // All players in the game. The first player is the lobby leader.
+	json initialization_data = json::object();  // Data sent to new players to recreate current game state.
+	static std::map<std::string, LobbySession*> sessions;  // All LobbySession::sessions by name
 
-	LobbySession(PlayerDetails *leader, std::string lobby_name, std::string game_name)
-		: game_name(game_name), lobby_name(lobby_name) {
-		this->players.push_back(leader);
-	}
+	LobbySession(PlayerDetails *leader, const std::string &lobby_name, const std::string &game_name)
+		: game_name(game_name), lobby_name(lobby_name), players{leader} {}
 
-	PlayerDetails *get_leader() {
+	// Get lobby leader
+	PlayerDetails *get_leader() const {
+		assert(("Players is not empty (lobby should have been deinitialized)", this->players.size() > 0));
 		if (this->players.size() == 0) return nullptr;
 		return this->players[0];
 	}
-	size_t num_players() {
+
+	// Number of players
+	size_t num_players() const {
 		return this->players.size();
 	}
-	bool is_full() {
-		return (this->num_players() >= max_players_per_lobby);
+
+	// True if lobby is full
+	bool is_full() const {
+		return (this->num_players() >= config::max_players_per_lobby);
 	}
-	bool has_player(PlayerDetails *player) {
+
+	// Check for player in lobby
+	bool has_player(PlayerDetails *player) const {
 		auto search = std::find(this->players.begin(), this->players.end(), player);
 		return (search != this->players.end());
 	}
+
+	// Add player to lobby
 	void add_player(PlayerDetails *player) {
+		assert(("Lobby should not be overfilled", this->num_players() + 1 <= config::max_players));
 		this->players.push_back(player);
 	}
+
+	// Remove player from lobby
 	bool remove_player(PlayerDetails *player) {
 		auto search = std::find(this->players.begin(), this->players.end(), player);
 		if (search != this->players.end()) {
@@ -56,27 +73,24 @@ struct LobbySession {
 		return false;
 	}
 };
+std::map<std::string, LobbySession*> LobbySession::sessions;
 
 struct PlayerDetails {
-	static uint64_t last_id;
-	uint64_t id = 0;
-	std::string lobby_session_name;
+	static uint64_t last_id;  // Last id given to a player (increments for each new connection)
+	static uint64_t num_concurrent_players;  // Total number of concurrent players
+	uint64_t id = 0;  // Id of current player
+	LobbySession *lobby;
 	uWS::WebSocket<false, true, PlayerDetails> *socket_connection;
-	
+
+	// True if player in valid lobby
 	bool in_valid_lobby() {
-		if (this->lobby_session_name == "") return false;
-		auto search = lobbies.find(lobby_session_name);
-		return (search != lobbies.end());
+		return (lobby != nullptr);
 	}
-	
-	LobbySession *get_lobby() {
-		if (!this->in_valid_lobby()) return nullptr;
-		return lobbies.find(lobby_session_name)->second;
-	}
-	
+
+	// True if player is leader of lobby
 	bool is_leader() {
 		if (this->in_valid_lobby()) {
-			if (this->get_lobby()->players[0] == this) {
+			if (this->lobby->players[0] == this) {
 				return true;
 			}
 		}
@@ -84,7 +98,7 @@ struct PlayerDetails {
 	}
 };
 uint64_t PlayerDetails::last_id = 0;
-uint64_t total_players = 0;
+uint64_t PlayerDetails::num_concurrent_players = 0;
 
 
 const json EMPTY_JSON = json::object();
@@ -111,16 +125,17 @@ const std::string DATA_MESSAGE = DATA.dump();
 
 int main() {
 	uWS::App app = uWS::App();  // Websocket app
-	
+
+	// Set up websocket endpoint for players
 	app.ws<PlayerDetails>("/game_server", {
 		// General settings
-		.idleTimeout = player_timeout,
+		.idleTimeout = config::player_timeout,
 			
 		// Connection started - initialization
 		.open = [=](auto *ws) {
 			auto *player_info = reinterpret_cast<PlayerDetails *>(ws->getUserData());
 
-			if (total_players >= max_players) {
+			if (PlayerDetails::num_concurrent_players >= config::max_players) {
 				ws->close();
 				return;
 			}
@@ -129,7 +144,7 @@ int main() {
 			player_info->socket_connection = ws;
 
 			std::cout << "--Joined: " << player_info->id << std::endl;
-			total_players++;
+			PlayerDetails::num_concurrent_players++;
 
 			ws->send(CONNECTED_MESSAGE);
 		},
@@ -147,8 +162,8 @@ int main() {
 
 			std::cout << "Got " << message.dump() << std::endl;
 
-			if (message_type == "initialization_data" && current_player->is_leader()) {
-				current_player->get_lobby()->initialization_data = message.value("data", EMPTY_JSON);
+			if (message_type == "initialization_data" && current_player->is_leader() && current_player->in_valid_lobby()) {
+				current_player->lobby->initialization_data = message.value("data", EMPTY_JSON);
 				return;
 			}
 
@@ -157,8 +172,8 @@ int main() {
 			}
 
 			// Process packets for certain games
-			if (game_processing.find(game_name) != game_processing.end()) {
-				message = game_processing[game_name](message);
+			if (config::game_processing.find(game_name) != config::game_processing.end()) {
+				message = config::game_processing[game_name](message);
 			}
 			
 			if (current_player->in_valid_lobby()) {
@@ -166,35 +181,33 @@ int main() {
 				
 				if (current_player->is_leader()) {
 					// Send to everyone
-					std::cout << "--Forwarding to everyone" << std::endl;
-					for (auto *player : current_player->get_lobby()->players) {
+					for (auto *player : current_player->lobby->players) {
 						if (player != current_player) {
 							player->socket_connection->send(dumped_message);
 						}
 					}
 				} else {
 					// Send to leader
-					std::cout << "--Forwarding to leader" << std::endl;
-					auto *leader = current_player->get_lobby()->get_leader();
+					auto *leader = current_player->lobby->get_leader();
 					if (leader) {
 						leader->socket_connection->send(dumped_message);
 					}
 				}
 			} else {
 				// Modify lobby
-				auto search = lobbies.find(lobby_name);
+				auto search = LobbySession::sessions.find(lobby_name);
 
 				if (lobby_name == "") {
 					// Invalid lobby
 					ws->send(ERROR_MESSAGE);
-				} else if (search == lobbies.end()) {
+				} else if (search == LobbySession::sessions.end()) {
 					// Create lobby if doesn't exist
 					json creation_success = SUCCESS;
 					std::cout << "Creating lobby " << lobby_name << std::endl;
 					
 					LobbySession *new_lobby = new LobbySession(current_player, lobby_name, game_name);
-					lobbies[lobby_name] = new_lobby;
-					current_player->lobby_session_name = lobby_name;
+					LobbySession::sessions[lobby_name] = new_lobby;
+					current_player->lobby = new_lobby;
 					creation_success["data"]["is_leader"] = true;
 					creation_success["data"]["player_id"] = current_player->id;
 					creation_success["lobby"] = lobby_name;
@@ -211,7 +224,7 @@ int main() {
 						ws->send(ERROR_MESSAGE);
 					} else {
 						lobby->add_player(current_player);
-						current_player->lobby_session_name = lobby_name;
+						current_player->lobby = lobby;
 						joining_success["data"]["is_leader"] = false;
 						joining_success["data"]["player_id"] = current_player->id;
 						joining_success["lobby"] = lobby_name;
@@ -231,11 +244,11 @@ int main() {
 		.close = [](auto *ws, int code, std::string_view message) {
 			auto *current_player = reinterpret_cast<PlayerDetails *>(ws->getUserData());
 			
-			auto *lobby = current_player->get_lobby();
+			auto *lobby = current_player->lobby;
 			bool was_leader = current_player->is_leader();
 			lobby->remove_player(current_player);
 			if (lobby->num_players() == 0) {
-				lobbies.erase(lobby->lobby_name);
+				LobbySession::sessions.erase(lobby->lobby_name);
 				std::cout << "Deleting lobby " << lobby->lobby_name << std::endl;
 				delete lobby;
 			} else if (was_leader) {
@@ -245,42 +258,47 @@ int main() {
 				lobby->players[0]->socket_connection->send(new_leader_message.dump());
 			}
 
-			total_players--;
+			PlayerDetails::num_concurrent_players--;
 			
 			std::cout << "--Left: " << current_player->id << std::endl;
 		}
 		
 	});  // Set up websocket
 
-	// Server status
+	// Set up server status endpoint
 	app.get("/status", [](auto *res, auto *req) {
 		json status = {
-			{"players", total_players},
-			{"lobbies", lobbies.size()},
+			{"num_players", PlayerDetails::num_concurrent_players},
+			{"num_lobbies", LobbySession::sessions.size()},
 			{"next_player_id", PlayerDetails::last_id + 1}
 		};
 		res->end(status.dump());
 	});
 
-	// Current lobbies
+	// Set up lobby information endpoint
 	app.get("/lobbies", [](auto *res, auto *req) {
 		json lobby_info = {
 			{"lobbies", EMPTY_JSON}
 		};
-		for (const auto l : lobbies) {
-			lobby_info["lobbies"][l.first] = l.second->num_players();
+		for (const auto l : LobbySession::sessions) {
+			lobby_info["lobbies"][l.first] = {
+				{"num_players", l.second->num_players()},
+				{"game", l.second->game_name}
+			};
 		}
 		
 		res->end(lobby_info.dump());
 	});
-	
-	app.listen(port, [](auto *listen_socket) {
+
+	// Listen on configured port
+	app.listen(config::port, [](auto *listen_socket) {
 		if (listen_socket) {
-			std::cout << "Listening on " << port << std::endl;
+			std::cout << "Running on port:" << config::port << std::endl;
 		}
 	});
 	
-	app.run();
-	
-	std::cout << "Failed to listen" << std::endl;
+	app.run();  // Start server
+
+	// This is only executed if server failed to bind
+	std::cout << "Failed to run on port:" << config::port << std::endl;
 }

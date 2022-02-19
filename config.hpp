@@ -11,6 +11,7 @@
 
 using nlohmann::json;
 
+namespace config {
 
 bool debug = true;
 uint16_t port = 3000;
@@ -25,8 +26,10 @@ std::map<std::string, std::function<json (const json)>> game_processing = {
 		json return_message = message;
 		json data = message.value("data", json::object());
 		int value = data.value("value", 0);
-		data["value"] = value;
+		data["value"] = value + 1;
 		return_message["data"] = data;
 		return return_message;
 	}}
 };
+
+}

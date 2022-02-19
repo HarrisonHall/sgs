@@ -37,7 +37,6 @@ make
 - Generalize makefile
 - Standardize logging
 - Create some interface for managing the server after it already launched
-- Provide more information to the get requests (`/lobbies` and `/status`)
 - Consider adding security (SSL)
 - Manage multiple servers for use in something like kubernetes
 - Robust exception handling so clients can't crash server

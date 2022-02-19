@@ -35,7 +35,6 @@ make
 
 ## Future work
 - Generalize makefile
-- Standardize logging
 - Create some interface for managing the server after it already launched
 - Consider adding security (SSL)
 - Manage multiple servers for use in something like kubernetes
@@ -46,3 +45,4 @@ make
 ## FAQ
 - There are no launch flags, all configuration is done before compilation
 - All information is serialized in json
+- Tested on linux and macos, but should be compilable on Windows if Makefile is generalized

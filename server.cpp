@@ -7,7 +7,7 @@
 #pragma GCC diagnostic ignored "-Wunused-value"  // Selectively ignore assert warning
 
 #include <cassert>
-#include <iostream>
+#include <cstdio>
 #include <map>
 #include <string>
 #include <vector>
@@ -143,7 +143,7 @@ int main() {
 			player_info->id = ++PlayerDetails::last_id;
 			player_info->socket_connection = ws;
 
-			std::cout << "--Joined: " << player_info->id << std::endl;
+			printf("--Joined: [%llx]\n", player_info->id);
 			PlayerDetails::num_concurrent_players++;
 
 			ws->send(CONNECTED_MESSAGE);
@@ -153,14 +153,10 @@ int main() {
 		.message = [](auto *ws, std::string_view _message, uWS::OpCode opCode) {
 			auto *current_player = reinterpret_cast<PlayerDetails *>(ws->getUserData());
 
-			std::cout << "Got message: " << _message << std::endl;
-
 			auto message = json::parse(_message, nullptr, false, true);
 			std::string lobby_name = message.value("lobby", "");
 			std::string game_name = message.value("game", "");
 			std::string message_type = message.value("type", "error");
-
-			std::cout << "Got " << message.dump() << std::endl;
 
 			if (message_type == "initialization_data" && current_player->is_leader() && current_player->in_valid_lobby()) {
 				current_player->lobby->initialization_data = message.value("data", EMPTY_JSON);
@@ -203,7 +199,8 @@ int main() {
 				} else if (search == LobbySession::sessions.end()) {
 					// Create lobby if doesn't exist
 					json creation_success = SUCCESS;
-					std::cout << "Creating lobby " << lobby_name << std::endl;
+					
+					printf("--Creating lobby: %s [%llx]\n", lobby_name.c_str(), current_player->id);
 					
 					LobbySession *new_lobby = new LobbySession(current_player, lobby_name, game_name);
 					LobbySession::sessions[lobby_name] = new_lobby;
@@ -214,9 +211,10 @@ int main() {
 					ws->send(creation_success.dump());
 				} else {
 					// Add to lobby if not full and game matches
-					std::cout << "Adding to lobby" << std::endl;
 					auto *lobby = search->second;
 					json joining_success = SUCCESS;
+
+					printf("--Joining lobby: %s [%llx]\n", lobby_name.c_str(), current_player->id);
 
 					if (lobby->game_name != game_name) {
 						ws->send(ERROR_MESSAGE);
@@ -249,7 +247,7 @@ int main() {
 			lobby->remove_player(current_player);
 			if (lobby->num_players() == 0) {
 				LobbySession::sessions.erase(lobby->lobby_name);
-				std::cout << "Deleting lobby " << lobby->lobby_name << std::endl;
+				printf("--Deleting lobby: %s\n", lobby->lobby_name.c_str());
 				delete lobby;
 			} else if (was_leader) {
 				auto new_leader_message = SUCCESS;
@@ -260,7 +258,7 @@ int main() {
 
 			PlayerDetails::num_concurrent_players--;
 			
-			std::cout << "--Left: " << current_player->id << std::endl;
+			printf("--Disconnected: [%llx]\n", current_player->id);
 		}
 		
 	});  // Set up websocket
@@ -293,12 +291,12 @@ int main() {
 	// Listen on configured port
 	app.listen(config::port, [](auto *listen_socket) {
 		if (listen_socket) {
-			std::cout << "Running on port:" << config::port << std::endl;
+			printf("!Running on port: %hu\n", config::port);
 		}
 	});
 	
 	app.run();  // Start server
 
 	// This is only executed if server failed to bind
-	std::cout << "Failed to run on port:" << config::port << std::endl;
+	printf("!Failed to run on port: %hu\n", config::port);
 }

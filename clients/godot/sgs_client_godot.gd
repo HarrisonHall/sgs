@@ -21,20 +21,20 @@ func _ready():
 	client.connect("connection_established", self, "_connection_established")
 	client.connect("data_received", self, "_data_received")
 
-func _connection_established(proto = ""):
+func _connection_established(proto : String = ""):
 	print("SGS: Connected to server: " + current_url)
-	connected_to_sgs = true
+	self.connected_to_sgs = true
 	emit_signal("server_connected")
 
 func _data_received():
-	var raw = client.get_peer(1).get_packet().get_string_from_utf8()
+	var raw : String = client.get_peer(1).get_packet().get_string_from_utf8()
 	
-	var res = JSON.parse(raw)
+	var res : JSONParseResult = JSON.parse(raw)
 	if res.error != OK:
 		prints("SGS: Unable to parse data:", raw)
 		return
 	
-	var obj = res.result
+	var obj : Dictionary = res.result
 	
 	if obj.get("type", "error") == "success":
 		if connecting_to_lobby:
@@ -99,13 +99,13 @@ func _reset_state_variables():
 	current_id = -1
 
 # State variables
-var connected_to_sgs = false
-var connecting_to_lobby = false
-var connected_to_lobby = false
-var lobby_leader = false
-var current_lobby = ""
-var current_game = ""
-var current_id = -1
+var connected_to_sgs : bool = false
+var connecting_to_lobby : bool = false
+var connected_to_lobby : bool = false
+var lobby_leader : bool = false
+var current_lobby : String = ""
+var current_game : String = ""
+var current_id : int = -1
 
 func disconnect_from_server():
 	if connected_to_server():
@@ -148,31 +148,31 @@ func connect_to_lobby(lobby_name, game_name):
 func send_data(obj):
 	if not connected_to_server() or not in_lobby():
 		return false
-	var message = {
+	var message : Dictionary = {
 		"type": "data",
 		"data": obj,
 		"lobby": current_lobby,
 		"game": current_game
 	}
-	var jstr = JSON.print(message)
+	var jstr : String = JSON.print(message)
 	client.get_peer(1).put_packet(jstr.to_utf8())
 	return true
 
 func send_initialization(obj):
 	if not connected_to_server() or not in_lobby() or not is_leader():
 		return false
-	var message = {
+	var message : Dictionary = {
 		"type": "initialization_data",
 		"data": obj,
 		"lobby": current_lobby,
 		"game": current_game
 	}
-	var jstr = JSON.print(message)
+	var jstr : String = JSON.print(message)
 	client.get_peer(1).put_packet(jstr.to_utf8())
 	return true
 
-func is_leader():
-	return (lobby_leader and connected_to_lobby)
+func is_leader() -> bool:
+	return (self.lobby_leader and self.connected_to_lobby)
 
-func player_id():
-	return current_id
+func player_id() -> int:
+	return self.current_id
